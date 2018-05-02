@@ -2700,100 +2700,6 @@ _cairo_svg_surface_stroke (void			*abstract_dst,
     return CAIRO_STATUS_SUCCESS;
 }
 
-static cairo_int_status_t
-_cairo_svg_surface_show_glyphs (void			*abstract_surface,
-				cairo_operator_t	 op,
-				const cairo_pattern_t	*pattern,
-				cairo_glyph_t		*glyphs,
-				int			 num_glyphs,
-				cairo_scaled_font_t	*scaled_font,
-				const cairo_clip_t	*clip)
-{
-    cairo_svg_surface_t *surface = abstract_surface;
-    cairo_svg_document_t *document = surface->document;
-    cairo_path_fixed_t path;
-    cairo_int_status_t status;
-    cairo_scaled_font_subsets_glyph_t subset_glyph;
-    int i;
-
-    if (surface->paginated_mode == CAIRO_PAGINATED_MODE_ANALYZE)
-	return _cairo_svg_surface_analyze_operation (surface, op, pattern);
-
-    assert (_cairo_svg_surface_operation_supported (surface, op, pattern));
-
-    if (num_glyphs <= 0)
-	return CAIRO_STATUS_SUCCESS;
-
-    status = _cairo_surface_clipper_set_clip (&surface->clipper, clip);
-    if (unlikely (status))
-	return status;
-
-    /* FIXME it's probably possible to apply a pattern of a gradient to
-     * a group of symbols, but I don't know how yet. Gradients or patterns
-     * are translated by x and y properties of use element. */
-    if (pattern->type != CAIRO_PATTERN_TYPE_SOLID)
-	goto FALLBACK;
-
-    _cairo_output_stream_printf (surface->xml_node, "<g style=\"");
-    status = _cairo_svg_surface_emit_pattern (surface, pattern,
-	                                      surface->xml_node, FALSE, NULL);
-    if (unlikely (status))
-	return status;
-
-    _cairo_svg_surface_emit_operator_for_style (surface->xml_node, surface, op);
-
-    _cairo_output_stream_printf (surface->xml_node, "\">\n");
-
-    for (i = 0; i < num_glyphs; i++) {
-	status = _cairo_scaled_font_subsets_map_glyph (document->font_subsets,
-						       scaled_font, glyphs[i].index,
-						       NULL, 0,
-                                                       &subset_glyph);
-	if (status == CAIRO_INT_STATUS_UNSUPPORTED) {
-	    _cairo_output_stream_printf (surface->xml_node, "</g>\n");
-
-	    glyphs += i;
-	    num_glyphs -= i;
-	    goto FALLBACK;
-	}
-
-	if (unlikely (status))
-	    return status;
-
-	_cairo_output_stream_printf (surface->xml_node,
-				     "  <use xlink:href=\"#glyph%d-%d\" "
-				     "x=\"%f\" y=\"%f\"/>\n",
-				     subset_glyph.font_id,
-                                     subset_glyph.subset_glyph_index,
-				     glyphs[i].x, glyphs[i].y);
-    }
-
-    _cairo_output_stream_printf (surface->xml_node, "</g>\n");
-
-    return CAIRO_STATUS_SUCCESS;
-
-FALLBACK:
-    _cairo_path_fixed_init (&path);
-
-    status = _cairo_scaled_font_glyph_path (scaled_font,
-					    (cairo_glyph_t *) glyphs,
-					    num_glyphs, &path);
-
-    if (unlikely (status)) {
-	_cairo_path_fixed_fini (&path);
-	return status;
-    }
-
-    status = _cairo_svg_surface_fill (abstract_surface, op, pattern,
-				      &path, CAIRO_FILL_RULE_WINDING,
-				      0.0, CAIRO_ANTIALIAS_SUBPIXEL,
-				      clip);
-
-    _cairo_path_fixed_fini (&path);
-
-    return status;
-}
-
 static void
 _cairo_svg_surface_get_font_options (void                  *abstract_surface,
 				     cairo_font_options_t  *options)
@@ -2811,6 +2717,43 @@ static const char **
 _cairo_svg_surface_get_supported_mime_types (void	   *abstract_surface)
 {
     return _cairo_svg_supported_mime_types;
+}
+
+static cairo_bool_t _cairo_svg_surface_has_show_text_glyphs	(void *surface) {
+	return TRUE;
+};
+
+static cairo_int_status_t _cairo_svg_surface_show_text_glyphs	(
+	void *abstract_surface,
+	cairo_operator_t	     op,
+	const cairo_pattern_t	    *source,
+	const char		    *utf8,
+	int			     utf8_len,
+	cairo_glyph_t		    *glyphs,
+	int			     num_glyphs,
+	const cairo_text_cluster_t *clusters,
+	int			     num_clusters,
+	cairo_text_cluster_flags_t  cluster_flags,
+	cairo_scaled_font_t	    *scaled_font,
+	const cairo_clip_t               *clip) 
+{
+    cairo_svg_surface_t *surface = abstract_surface;
+    cairo_svg_document_t *document = surface->document;
+    cairo_path_fixed_t path;
+    cairo_int_status_t status;
+    int i;
+
+	char s[utf8_len + 1];
+	memcpy(s, utf8, utf8_len);
+	s[utf8_len] = 0;
+
+	_cairo_output_stream_printf (surface->xml_node, "<text x=\"%f\" y=\"%f\" style=\"", glyphs[0].x, glyphs[0].y);
+	_cairo_svg_surface_emit_operator_for_style (surface->xml_node, surface, op);
+	_cairo_output_stream_printf (surface->xml_node, "\">\n");
+	_cairo_output_stream_printf (surface->xml_node, "%s", glyphs[0].x, glyphs[0].y, s);
+
+	_cairo_output_stream_printf (surface->xml_node, "</text>\n");
+	return CAIRO_STATUS_SUCCESS;
 }
 
 static const cairo_surface_backend_t cairo_svg_surface_backend = {
@@ -2843,9 +2786,11 @@ static const cairo_surface_backend_t cairo_svg_surface_backend = {
 	_cairo_svg_surface_stroke,
 	_cairo_svg_surface_fill,
 	_cairo_svg_surface_fill_stroke,
-	_cairo_svg_surface_show_glyphs,
-	NULL, /* has_show_text_glyphs */
-	NULL, /* show_text_glyphs */
+	NULL,
+	
+	_cairo_svg_surface_has_show_text_glyphs, 
+	_cairo_svg_surface_show_text_glyphs,
+
 	_cairo_svg_surface_get_supported_mime_types,
 };
 
